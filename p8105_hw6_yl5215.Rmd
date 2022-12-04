@@ -1,0 +1,107 @@
+---
+title: "p8105 HW6"
+date: "2022-12-03"
+output: github_document
+---
+
+```{r load package, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(modelr)
+```
+
+### Problem 2
+
+```{r read homi_data, warning=FALSE}
+homi_data = 
+  read.csv("./data/homicide-data.csv") %>%
+  janitor::clean_names()
+```
+
+Create a city_state variable, and a binary resolved variable of disposition. Omit data entry mistake and cities that don’t report victim race. Only consider white and black race
+.
+```{r message=FALSE, warning=FALSE}
+homi_data = 
+  homi_data %>% 
+  mutate(city_state = paste(city, state, sep = ", ", collapse = NULL)) %>%
+  mutate(resolved = as.numeric(disposition == "Closed by arrest"),
+         victim_age = as.numeric(victim_age)) %>%
+  relocate(city_state) %>% 
+  filter( !(city_state %in% c("Dallas, TX", "Phoenix, AZ", " Kansas City, MO", "Tulsa, AL")),
+    victim_race %in% c("Black", "White")) %>% 
+  mutate(
+    victim_race = as.factor(victim_race),
+    victim_sex = as.factor(victim_sex))
+```
+
+In `resolved` variable, 1 represents "Closed by arrest", 0 represents "Closed without arrest" or "Open/No arrest".
+
+For Baltimore, fit a logistic regression of resolved vs unresolved on victim age, sex and race.
+
+```{r}
+balt =
+  homi_data %>%
+  filter(city_state == "Baltimore, MD")
+fit_logistic_balt = 
+  glm(resolved ~ victim_age + victim_sex + victim_race, family = binomial(), data = balt) 
+```
+
+Obtain the estimate and confidence interval of the adjusted odds ratio for solving homicides comparing male victims to female victims keeping all other variables fixed.
+
+```{r}
+balt_fit = fit_logistic_balt %>% broom::tidy() 
+balt_est = 
+  balt_fit %>% 
+  filter(term == "victim_sexMale") %>% 
+  mutate(
+    OR = exp(estimate),
+    conf_lower = exp(estimate - 1.96*std.error),
+    conf_upper = exp(estimate + 1.96*std.error))
+balt_est
+```
+
+The adjusted odds ratio is estimated to be 0.4255117 with a 95% confidence interval (0.324559, 0.5578655).
+
+Fit a logistic regression of resolved vs unresolved on victim age, sex and race for each city and extract the adjusted odds ratio (and CI) for solving homicides comparing male victims to female victims.
+
+```{r}
+func = function(city) {
+  city_fit = 
+    glm(resolved ~ victim_age + victim_sex + victim_race, family = binomial(), data = city) %>%
+    broom::tidy() %>% 
+    mutate(
+    OR = exp(estimate),
+    conf_lower = exp(estimate - 1.96*std.error),
+    conf_upper = exp(estimate + 1.96*std.error)) %>%
+    filter(term == "victim_sexMale") %>%
+    select(OR, conf_lower, conf_upper)
+  return(city_fit)
+}
+```
+
+```{r}
+city = 
+  homi_data %>%
+  nest(data = uid:resolved) %>%
+  mutate(
+    outputs = map(data, func)) %>%
+  select(-data) %>%
+  unnest(outputs)
+city %>%
+  knitr::kable(digits = 3)
+```
+
+Make a plot.
+
+```{r}
+city_plot = 
+  city %>% 
+  mutate(city_state = fct_reorder(city_state, OR)) %>%
+  ggplot(aes(x = city_state, y = OR)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = conf_lower, ymax = conf_upper)) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 0.5)) +
+  labs(title = "Estimate And CIs Of Adjusted Odds Ratio Comparing Male Victims To Female", x = "City, State", y = "Estimate / CI for solving homicides")
+city_plot
+```
+
+The adjusted odds ratio is mostly less than 1 in the USA indicating male cases are harder to solve than female cases. Only Nashville, TN, Fresno, CA, Stockton, CA, Albuquerque, NM are the exceptions where female cases are harder to solve than male cases. The odds is the lowest in New York, NY indicating that in New York, NY, male cases are the hardest to solve comparing to female cases.
