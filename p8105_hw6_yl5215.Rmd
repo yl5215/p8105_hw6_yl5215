@@ -9,7 +9,7 @@ library(tidyverse)
 library(modelr)
 ```
 
-### Problem 2
+# Problem 2
 
 ```{r read homi_data, warning=FALSE}
 homi_data = 
@@ -105,3 +105,92 @@ city_plot
 ```
 
 The adjusted odds ratio is mostly less than 1 in the USA indicating male cases are harder to solve than female cases. Only Nashville, TN, Fresno, CA, Stockton, CA, Albuquerque, NM are the exceptions where female cases are harder to solve than male cases. The odds is the lowest in New York, NY indicating that in New York, NY, male cases are the hardest to solve comparing to female cases.
+
+# Problem 3
+
+```{r read bwt}
+bwt = 
+  read.csv("./data/birthweight.csv") %>%
+  janitor::clean_names() %>% 
+  drop_na() %>% 
+  mutate(babysex = as.factor(babysex),
+         frace = as.factor(frace),
+         malform = as.factor(malform),
+         mrace = as.factor(mrace))
+```
+
+Propose a regression model for birthweight.
+
+I hypothesize that birthweight is influenced by babysex (baby’s sex), gaweeks (gestational age in weeks), malform (presence of malformations that could affect weight), momage (mother’s age at delivery), mrace (mother’s race), parity (number of live births prior to this pregnancy), smoken (average number of cigarettes smoked per day during pregnancy), wtgain (mother’s weight gain during pregnancy). Therefore, these variables are chosen as predictors in the regrassion model.
+
+```{r}
+fit1 = lm(bwt ~ babysex + gaweeks + malform + momage + mrace + parity + smoken + wtgain, data = bwt)
+summary(fit1)
+```
+
+momage, malform, and parity are removed because they are insignificant.
+
+```{r}
+fit = lm(bwt ~ babysex + gaweeks + mrace + smoken + wtgain, data = bwt)
+```
+
+Predictors chosen are babysex, gaweeks, mrace, smoken, and wtgain.
+
+Make a plot of model residuals against fitted values.
+
+```{r plot of model residuals against fitted values}
+plot_df = 
+  bwt %>% 
+  select(bwt, babysex, mrace, gaweeks, smoken, wtgain) %>%
+  modelr::add_residuals(., fit) %>% 
+  modelr::add_predictions(., fit)
+plot_res = 
+  ggplot(plot_df, aes(x = pred, y = resid)) + 
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  labs( title = "Residuals against fitted values", x = "Prediction (garms)", y = "Residuals (garms)")
+plot_res
+```
+
+The model fits well because observations seem evenly distributed around y=0.
+
+Compare my model to two other models in terms of the cross-validated prediction error.
+
+```{r message=FALSE, warning=FALSE}
+cv_df = 
+  crossv_mc(bwt, 100) %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))
+cv_results = 
+  cv_df %>% 
+  mutate(
+    fit_mod = map(train, ~lm(bwt ~ babysex + mrace + parity + smoken + wtgain, data = .x)),
+    blength_gaweeks_mod = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    bhead_blength_babysex_mod = map(train, ~lm(bwt ~ bhead + blength + babysex + bhead*blength*babysex, data = .x))) %>% 
+  mutate(
+    rmse_fit_mod = map2_dbl(fit_mod, test, ~rmse(model = .x, data = .y)),
+    rmse_blength_gaweeks_mod = map2_dbl(blength_gaweeks_mod, test, ~rmse(model = .x, data = .y)),
+    rmse_bhead_blength_babysex_mod = map2_dbl(bhead_blength_babysex_mod, test, ~rmse(model = .x, data = .y)))
+```
+
+```{r cv_plot}
+cv_plot = 
+  cv_results %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + geom_violin() +
+  labs(title = "RMSE Of Each Model", x = "Model", y = "RMSE") +
+  theme(axis.text.x = element_text(angle = 15, vjust = 0.5, hjust = 0.5))+
+  theme(plot.title=element_text(hjust = 0.5))
+cv_plot
+```
+
+My model has the largest RMSE indicating the model gives the worse fit. The model using head circumference, length, sex, and all interactions has the lowest RMSE indicating the model gives the best fit.
+
+The result indicates that infant birth data (bhead, blength) are important in predicting birthweight and should be included when available.
